@@ -261,6 +261,221 @@ class XiaoBeiYangJiSource:
             })
         return result
 
+    # ─── 行情 / 资讯 / 榜单 ─────────────────────────────────────────────────
+
+    def fetch_market_overview(self) -> Dict:
+        """获取大盘概览"""
+        return self._request(
+            'POST',
+            '/yangji-api/api/get-market-overview',
+            json=self._common_body(),
+        ) or {}
+
+    def fetch_market_indices(self) -> List[Dict]:
+        """获取主要指数行情"""
+        return self._request(
+            'POST',
+            '/yangji-api/api/get-market-index-list',
+            json=self._common_body(),
+        ) or []
+
+    def fetch_flash_news(self, page: int = 1, page_size: int = 10) -> List[Dict]:
+        """获取快讯列表"""
+        body = {
+            'page': page,
+            'pageSize': page_size,
+            **self._common_body(),
+        }
+        data = self._request(
+            'POST',
+            '/yangji-api/api/flash-news/list',
+            json=body,
+        )
+        return (data or {}).get('list', [])
+
+    def fetch_sector_heat(self, limit: int = 10) -> List[Dict]:
+        """获取热门板块"""
+        body = {'limit': limit, **self._common_body()}
+        data = self._request_v2(
+            'POST',
+            '/api/app/valuation/sectorHeatTop',
+            json=body,
+        )
+        return (data or {}).get('list', [])
+
+    def fetch_sector_quote_rank(self, limit: int = 10) -> List[Dict]:
+        """获取板块涨幅榜"""
+        body = {'limit': limit, **self._common_body()}
+        data = self._request_v2(
+            'POST',
+            '/api/app/valuation/sectorQuoteRank',
+            json=body,
+        )
+        return (data or {}).get('list', [])
+
+    def fetch_sector_fund_heat(self, sector_code: str, limit: int = 10) -> List[Dict]:
+        """获取指定板块的热门基金"""
+        body = {
+            'sectorCode': sector_code,
+            'limit': limit,
+            **self._common_body(),
+        }
+        data = self._request_v2(
+            'POST',
+            '/api/app/valuation/sectorFundHeatTop/getBySectorCode',
+            json=body,
+        )
+        return (data or {}).get('list', [])
+
+    def fetch_fund_quote_rank(self, fund_type: str = 'all', limit: int = 20) -> Dict:
+        """获取基金估值涨幅/跌幅榜"""
+        body = {
+            'fundType': fund_type,
+            'limit': limit,
+            **self._common_body(),
+        }
+        return self._request_v2(
+            'POST',
+            '/api/app/valuation/fundQuoteRank/findTopQuoteRank',
+            json=body,
+        ) or {}
+
+    def fetch_fund_streak_rank(self, fund_type: str = 'all', limit: int = 20) -> Dict:
+        """获取基金连涨/连跌榜"""
+        body = {
+            'fundType': fund_type,
+            'limit': limit,
+            **self._common_body(),
+        }
+        return self._request_v2(
+            'POST',
+            '/api/app/valuation/fundStreakState/findTopStreakRanking',
+            json=body,
+        ) or {}
+
+    def fetch_pick_list(self) -> List[Dict]:
+        """获取自选列表"""
+        return list(self._get_pick_valuations().values())
+
+    def fetch_fund_position_ratio(self, fund_code: str) -> Dict:
+        """获取基金持仓/重仓股"""
+        body = {
+            'code': fund_code,
+            **self._common_body(),
+        }
+        data = self._request(
+            'POST',
+            '/yangji-api/api/get-fund-position-ratio',
+            json=body,
+        ) or {}
+        # 接口返回 data.data[0] 为当前基金的持仓明细
+        items = data.get('data') or []
+        if items:
+            return items[0]
+        return data
+
+    def fetch_account_list(self) -> Dict:
+        """获取账户列表和用户信息"""
+        return self._request(
+            'POST',
+            '/yangji-api/api/get-account-list',
+            json=self._common_body(),
+        ) or {}
+
+    def fetch_industry_optional_yield(self, codes: List[str]) -> List[Dict]:
+        """批量获取行业/指数估值涨跌"""
+        body = {
+            'dataResources': '2',
+            'dataSourceSwitch': True,
+            'valuationDate': date.today().isoformat(),
+            'navDate': date.today().isoformat(),
+            'isTD': True,
+            'codeArr': codes,
+            **self._common_body(),
+        }
+        return self._request(
+            'POST',
+            '/yangji-api/api/get-industry-optional-yield-price-v350',
+            json=body,
+        ) or []
+
+    def fetch_member_benefits(self) -> List[Dict]:
+        """获取会员权益列表"""
+        return self._request_v2(
+            'POST',
+            '/api/app/memberBenefit/list',
+            json=self._common_body(),
+        ) or []
+
+    def fetch_message_counts(self) -> List[Dict]:
+        """获取互动消息未读数"""
+        body = {
+            'isList': False,
+            **self._common_body(),
+        }
+        return self._request_v2(
+            'POST',
+            '/api/app/user/get-message',
+            json=body,
+        ) or []
+
+    def fetch_system_news_count(self) -> int:
+        """获取系统消息未读数"""
+        body = {
+            'isList': False,
+            'type': 'public',
+            **self._common_body(),
+        }
+        return self._request(
+            'POST',
+            '/yangji-api/api/get-user-system-news',
+            json=body,
+        ) or 0
+
+    def fetch_fund_opportunity(self, kind: str = 'swing', page: int = 1, hold_and_pick: bool = True) -> Dict:
+        """获取基金机会信号列表"""
+        path_map = {
+            'swing': '/api/app/user/valuation/fundSwingSignalsOpportunityByPage',
+            'trend': '/api/app/user/valuation/fundTrendStrengthOpportunityByPage',
+            'reversal': '/api/app/user/valuation/fundAmazingReversalOpportunityByPage',
+            'dips': '/api/app/user/valuation/fundBuyOnDipsOpportunityByPage',
+        }
+        if kind == 'swing':
+            body = {
+                'zone': 'highZone',
+                'page': page,
+                'holdAndPick': hold_and_pick,
+                'template': 'default',
+                **self._common_body(),
+            }
+        elif kind == 'trend':
+            body = {
+                'displayState': 'weakening',
+                'page': page,
+                'holdAndPick': hold_and_pick,
+                'template': 'balanced',
+                **self._common_body(),
+            }
+        elif kind == 'reversal':
+            body = {
+                'zone': 'upReversalZone',
+                'page': page,
+                'holdAndPick': hold_and_pick,
+                **self._common_body(),
+            }
+        else:
+            body = {
+                'zone': 'highWinZone',
+                'page': page,
+                'holdAndPick': hold_and_pick,
+                **self._common_body(),
+            }
+        return self._request_v2(
+            'POST',
+            path_map.get(kind, path_map['swing']),
+            json=body,
+        ) or {}
+
     def fetch_nav_history(
         self,
         fund_code: str,
@@ -464,6 +679,471 @@ def nav(code, start_date, end_date):
             r['nav_date'].isoformat(),
             str(r['nav']),
             _colored_growth(r['growth']),
+        )
+
+    console.print(table)
+
+
+@main.command()
+def market():
+    """查看大盘概览和主要指数"""
+    source = _get_source()
+    try:
+        overview = source.fetch_market_overview()
+        indices = source.fetch_market_indices()
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if overview:
+        console.print(
+            f"北向资金: {overview.get('northbound', 0)}  "
+            f"市场成交: {overview.get('market', 0)}  "
+            f"情绪: {overview.get('emotion', 0)}"
+        )
+
+    if not indices:
+        click.echo('暂无指数数据')
+        return
+
+    table = Table(title='主要指数', show_lines=False, highlight=True)
+    table.add_column('名称', style='bold')
+    table.add_column('代码')
+    table.add_column('最新点位', justify='right')
+    table.add_column('涨跌', justify='right')
+    table.add_column('涨跌幅', justify='right')
+
+    for item in indices:
+        table.add_row(
+            item.get('name', ''),
+            item.get('code', ''),
+            str(item.get('current', '')),
+            str(item.get('chg', '')),
+            _colored_growth(Decimal(str(item.get('percent') or 0))),
+        )
+
+    console.print(table)
+
+
+@main.command('sector-hot')
+@click.option('--limit', default=10, show_default=True, help='显示数量')
+def sector_hot(limit):
+    """查看热门板块"""
+    source = _get_source()
+    try:
+        items = source.fetch_sector_heat(limit)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无数据')
+        return
+
+    table = Table(title='热门板块', show_lines=False, highlight=True)
+    table.add_column('板块', style='bold')
+    table.add_column('代码')
+    table.add_column('热度', justify='right')
+    table.add_column('涨跌幅', justify='right')
+
+    for item in items:
+        table.add_row(
+            item.get('sectorName', ''),
+            item.get('sectorCode', ''),
+            str(item.get('heat', '')),
+            _colored_growth(Decimal(str(item.get('changeRate') or 0)) * 100),
+        )
+
+    console.print(table)
+
+
+@main.command('sector-rank')
+@click.option('--limit', default=10, show_default=True, help='显示数量')
+def sector_rank(limit):
+    """查看板块涨幅榜"""
+    source = _get_source()
+    try:
+        items = source.fetch_sector_quote_rank(limit)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无数据')
+        return
+
+    table = Table(title='板块涨幅榜', show_lines=False, highlight=True)
+    table.add_column('板块', style='bold')
+    table.add_column('代码')
+    table.add_column('涨跌幅', justify='right')
+    table.add_column('连涨/连跌', justify='right')
+
+    for item in items:
+        streak = item.get('streakState') or {}
+        streak_type = streak.get('type', '')
+        streak_days = streak.get('days', '')
+        if streak_type == 'up':
+            streak_text = f'连涨{streak_days}天'
+        elif streak_type == 'down':
+            streak_text = f'连跌{streak_days}天'
+        else:
+            streak_text = ''
+        table.add_row(
+            item.get('sectorName', ''),
+            item.get('sectorCode', ''),
+            _colored_growth(Decimal(str(item.get('changeRate') or 0)) * 100),
+            streak_text,
+        )
+
+    console.print(table)
+
+
+@main.command('sector-funds')
+@click.argument('sector_code')
+@click.option('--limit', default=10, show_default=True, help='显示数量')
+def sector_funds(sector_code, limit):
+    """查看指定板块的热门基金
+
+    示例: xbyj sector-funds XB1094
+    """
+    source = _get_source()
+    try:
+        items = source.fetch_sector_fund_heat(sector_code, limit)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无数据')
+        return
+
+    table = Table(title=f'{sector_code} 热门基金', show_lines=False, highlight=True)
+    table.add_column('代码', style='bold')
+    table.add_column('名称')
+    table.add_column('热度', justify='right')
+    table.add_column('涨跌幅', justify='right')
+
+    for item in items:
+        table.add_row(
+            item.get('fundCode', ''),
+            item.get('fundName', ''),
+            str(item.get('heat', '')),
+            _colored_growth(Decimal(str(item.get('changeRate') or 0)) * 100),
+        )
+
+    console.print(table)
+
+
+@main.command('rank')
+@click.option('--type', 'rank_type', type=click.Choice(['quote', 'streak']), default='quote', show_default=True, help='榜单类型')
+@click.option('--direction', type=click.Choice(['up', 'down']), default='up', show_default=True, help='上涨/下跌方向')
+@click.option('--limit', default=20, show_default=True, help='显示数量')
+def rank(rank_type, direction, limit):
+    """查看基金涨幅/跌幅榜、连涨/连跌榜"""
+    source = _get_source()
+    try:
+        if rank_type == 'quote':
+            data = source.fetch_fund_quote_rank(limit=limit)
+            rows = data.get('upList' if direction == 'up' else 'downList', [])
+            table = Table(title='基金估值涨幅榜' if direction == 'up' else '基金估值跌幅榜', show_lines=False, highlight=True)
+            table.add_column('代码', style='bold')
+            table.add_column('名称')
+            table.add_column('估值涨跌幅', justify='right')
+            table.add_column('所属板块', justify='right')
+
+            for item in rows:
+                table.add_row(
+                    item.get('fundCode', ''),
+                    item.get('fundName', ''),
+                    _colored_growth(Decimal(str(item.get('changeRate') or 0)) * 100),
+                    item.get('sectorName') or '',
+                )
+        else:
+            data = source.fetch_fund_streak_rank(limit=limit)
+            rows = data.get('upList' if direction == 'up' else 'downList', [])
+            table = Table(title='基金连涨榜' if direction == 'up' else '基金连跌榜', show_lines=False, highlight=True)
+            table.add_column('代码', style='bold')
+            table.add_column('名称')
+            table.add_column('连涨/连跌天数', justify='right')
+            table.add_column('类型', justify='right')
+            table.add_column('所属板块', justify='right')
+
+            for item in rows:
+                days = item.get('streakDays', '')
+                days_text = f'{days}天' if isinstance(days, int) else str(days)
+                table.add_row(
+                    item.get('fundCode', ''),
+                    item.get('fundName', ''),
+                    days_text,
+                    item.get('firstClass', ''),
+                    item.get('sectorName') or '',
+                )
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not rows:
+        click.echo('暂无数据')
+        return
+
+    console.print(table)
+
+
+@main.command('news')
+@click.option('--page', default=1, show_default=True, help='页码')
+@click.option('--limit', 'page_size', default=10, show_default=True, help='每页数量')
+def news(page, page_size):
+    """查看基金快讯"""
+    source = _get_source()
+    try:
+        items = source.fetch_flash_news(page, page_size)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无快讯')
+        return
+
+    for item in items:
+        title = item.get('title') or item.get('content', '')
+        if len(title) > 80:
+            title = title[:80] + '…'
+        publish_time = item.get('publishTime', '')
+        click.echo(f'[{publish_time}] {title}')
+    click.echo('')
+
+
+@main.command()
+def pick():
+    """查看自选列表估值"""
+    source = _get_source()
+    try:
+        items = source.fetch_pick_list()
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无自选')
+        return
+
+    table = Table(title='自选列表', show_lines=False, highlight=True)
+    table.add_column('代码', style='bold')
+    table.add_column('名称')
+    table.add_column('估值净值', justify='right')
+    table.add_column('估值涨跌', justify='right')
+
+    for item in items:
+        nav = Decimal(str(item.get('valuation') or item.get('nav') or 0))
+        growth = Decimal(str(item.get('valuationY') or item.get('navY') or 0)) * 100
+        table.add_row(
+            item.get('code', ''),
+            item.get('name', ''),
+            str(nav),
+            _colored_growth(growth),
+        )
+
+    console.print(table)
+
+
+@main.command('position')
+@click.argument('code')
+def position(code):
+    """查看基金重仓股/行业持仓
+
+    示例: xbyj position 025209
+    """
+    source = _get_source()
+    try:
+        data = source.fetch_fund_position_ratio(code)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    rows = data.get('position') or data.get('lastPosition') or []
+    if not rows:
+        click.echo('暂无持仓数据')
+        return
+
+    table = Table(title=f'{code} 基金持仓', show_lines=False, highlight=True)
+    table.add_column('代码', style='bold')
+    table.add_column('名称')
+    table.add_column('权重', justify='right')
+    table.add_column('涨跌幅', justify='right')
+    table.add_column('行业', justify='right')
+
+    for row in rows:
+        table.add_row(
+            str(row.get('code') or row.get('stock_code') or ''),
+            str(row.get('name') or row.get('stock_name') or ''),
+            str(row.get('weight') or ''),
+            _colored_growth(Decimal(str(row.get('change') or 0)) * 100) if row.get('change') is not None else '-',
+            str(row.get('industry') or ''),
+        )
+
+    console.print(table)
+
+
+@main.command('industry-yield')
+@click.argument('codes', nargs=-1, required=True)
+def industry_yield(codes):
+    """查询行业/指数估值（支持多个代码）
+
+    示例: xbyj industry-yield 886033.TI 000016.SH
+    """
+    source = _get_source()
+    try:
+        items = source.fetch_industry_optional_yield(list(codes))
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无数据')
+        return
+
+    table = Table(title='行业/指数估值', show_lines=False, highlight=True)
+    table.add_column('代码', style='bold')
+    table.add_column('最新点位', justify='right')
+    table.add_column('涨跌幅', justify='right')
+
+    for item in items:
+        table.add_row(
+            item.get('code', ''),
+            str(item.get('close', '')),
+            _colored_growth(Decimal(str(item.get('yield') or 0)) * 100),
+        )
+
+    console.print(table)
+
+
+@main.command('benefits')
+def benefits():
+    """查看会员权益列表"""
+    source = _get_source()
+    try:
+        items = source.fetch_member_benefits()
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not items:
+        click.echo('暂无数据')
+        return
+
+    table = Table(title='会员权益', show_lines=False, highlight=True)
+    table.add_column('名称', style='bold')
+    table.add_column('描述')
+    table.add_column('标签')
+
+    for item in items:
+        table.add_row(
+            item.get('name', ''),
+            item.get('description', ''),
+            item.get('promoTag') or item.get('tag') or '',
+        )
+
+    console.print(table)
+
+
+@main.command('messages')
+def messages():
+    """查看未读消息数"""
+    source = _get_source()
+    try:
+        counts = source.fetch_message_counts()
+        system_news = source.fetch_system_news_count()
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if counts:
+        for item in counts:
+            click.echo(f"{item.get('_id', '')}: {item.get('count', 0)}")
+    click.echo(f"系统消息: {system_news}")
+
+
+@main.command('opportunity')
+@click.option('--kind', type=click.Choice(['swing', 'trend', 'reversal', 'dips']), default='swing', show_default=True, help='机会类型')
+@click.option('--page', default=1, show_default=True, help='页码')
+def opportunity(kind, page):
+    """查看基金机会信号（波段/趋势/反转/回撤抄底）"""
+    source = _get_source()
+    try:
+        data = source.fetch_fund_opportunity(kind, page)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    rows = data.get('list', [])
+    if not rows:
+        click.echo('暂无数据')
+        return
+
+    table = Table(title=f'{kind} 机会信号', show_lines=False, highlight=True)
+    table.add_column('代码', style='bold')
+    table.add_column('名称')
+    table.add_column('状态/区域')
+    table.add_column('热度', justify='right')
+
+    for item in rows:
+        state = item.get('displayState') or item.get('zone') or ''
+        table.add_row(
+            item.get('code', ''),
+            item.get('name', ''),
+            state,
+            str(item.get('heat', '')),
+        )
+
+    console.print(table)
+
+
+@main.command()
+@click.argument('code')
+def fund(code):
+    """查看基金基本信息
+
+    示例: xbyj fund 025209
+    """
+    source = _get_source()
+    try:
+        detail = source._get_fund_detail(code)
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    if not detail:
+        click.echo('暂无数据')
+        return
+
+    click.echo(f"代码: {detail.get('code', code)}")
+    click.echo(f"名称: {detail.get('name', '')}")
+    click.echo(f"类型: {detail.get('investType', '')}")
+    click.echo(f"净值: {detail.get('nav', '')}")
+    daily_yield = Decimal(str(detail.get('dailyYield') or 0)) * 100
+    click.echo(f"日涨跌: {daily_yield:+.2f}%")
+    click.echo(f"成立日: {detail.get('setupDate', '')}")
+    click.echo(f"最新净值日期: {detail.get('latestPriceDate', '')}")
+
+
+@main.command()
+def account():
+    """查看账户列表和用户信息"""
+    source = _get_source()
+    try:
+        data = source.fetch_account_list()
+    except Exception as e:
+        raise click.ClickException(str(e))
+
+    user_info = data.get('userInfo') or {}
+    if user_info:
+        click.echo(f"用户: {user_info.get('nickName', '')} (uid: {user_info.get('uid', '')})")
+
+    accounts = data.get('accountList') or []
+    if not accounts:
+        click.echo('暂无账户')
+        return
+
+    table = Table(title='账户列表', show_lines=False, highlight=True)
+    table.add_column('名称', style='bold')
+    table.add_column('账户ID', justify='right')
+    table.add_column('创建时间')
+    table.add_column('更新时间')
+
+    for item in accounts:
+        table.add_row(
+            item.get('name', ''),
+            str(item.get('accountId', '')),
+            item.get('createTime', ''),
+            item.get('updateTime', ''),
         )
 
     console.print(table)
