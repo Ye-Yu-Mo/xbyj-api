@@ -6,7 +6,7 @@ import logging
 import math
 import requests
 from decimal import Decimal
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -40,11 +40,13 @@ class XiaoBeiYangJiSource:
     """小倍养基数据源（手机号登录）"""
 
     BASE_URL = 'https://api.xiaobeiyangji.com'
-    VERSION = '3.5.7.0'
+    APIV2_BASE_URL = 'https://apiv2.xiaobeiyangji.com'
+    VERSION = '3.8.9.0'
 
     def __init__(self):
         self._token = None
         self._union_id = None
+        self._pick_valuations = None
 
     def set_token(self, token: str):
         """设置 token 并自动从 JWT payload 提取 union_id"""
@@ -65,8 +67,10 @@ class XiaoBeiYangJiSource:
             'clientType': 'APP',
         }
 
-    def _request(self, method: str, path: str, **kwargs) -> Dict:
-        url = self.BASE_URL + path
+    def _request(self, method: str, path: str, base_url: str = None, **kwargs) -> Dict:
+        if base_url is None:
+            base_url = self.BASE_URL
+        url = base_url + path
         headers = {
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self._token or ""}',
@@ -75,8 +79,12 @@ class XiaoBeiYangJiSource:
         response.raise_for_status()
         result = response.json()
         if result.get('code') != 200:
-            raise Exception(f"API 错误: {result.get('msg', 'Unknown error')}")
+            msg = result.get('msg') or result.get('message') or 'Unknown error'
+            raise Exception(f"API 错误: {msg}")
         return result.get('data')
+
+    def _request_v2(self, method: str, path: str, **kwargs) -> Dict:
+        return self._request(method, path, base_url=self.APIV2_BASE_URL, **kwargs)
 
     # ─── 登录 ────────────────────────────────────────────────────────────────
 
@@ -126,26 +134,40 @@ class XiaoBeiYangJiSource:
 
     # ─── 估值 ────────────────────────────────────────────────────────────────
 
-    def _get_optional_change_nav(self, fund_codes: List[str]) -> List[Dict]:
-        """批量获取估值数据"""
-        today = date.today()
-        yesterday = today - timedelta(days=1)
+    def _get_pick_valuations(self) -> Dict[str, Dict]:
+        """获取自选列表的估值快照（新 API 替代 get-optional-change-nav）"""
+        if self._pick_valuations is None:
+            body = {
+                'page': 0,
+                'groupId': '',
+                'dataResources': '2',
+                'dataSourceSwitch': True,
+                **self._common_body(),
+            }
+            data = self._request_v2(
+                'POST',
+                '/api/app/user/pickList/getList',
+                json=body,
+            )
+            items = data.get('list', []) if data else []
+            self._pick_valuations = {x['code']: x for x in items}
+        return self._pick_valuations
+
+    def _get_net_worth_es(self, fund_code: str) -> List[Dict]:
+        """获取单支基金的实时估值序列"""
         body = {
-            'dataResources': '4',
+            'code': fund_code,
+            'dataResources': '2',
             'dataSourceSwitch': True,
-            'valuationDate': today.isoformat(),
-            'navDate': yesterday.isoformat(),
-            'isTD': True,
-            'codeArr': fund_codes,
             **self._common_body(),
         }
-        return self._request('POST', '/yangji-api/api/get-optional-change-nav', json=body)
+        return self._request('POST', '/yangji-api/api/get-net-worth-es', json=body)
 
     def _get_fund_detail(self, fund_code: str) -> Dict:
         """获取基金详情（含名称）"""
         body = {
             'code': fund_code,
-            'accountId': 0,
+            'accountId': '',
             'dataResources': '4',
             'dataSourceSwitch': True,
             'isHasPosition': True,
@@ -156,25 +178,42 @@ class XiaoBeiYangJiSource:
 
     def fetch_estimate(self, fund_code: str) -> Optional[Dict]:
         """获取单支基金估值"""
-        nav_list = self._get_optional_change_nav([fund_code])
-        if not nav_list:
-            return None
-        item = next((x for x in nav_list if x.get('code') == fund_code), None)
-        if not item:
-            return None
+        pick_item = self._get_pick_valuations().get(fund_code)
+        if pick_item:
+            return {
+                'fund_code': fund_code,
+                'fund_name': pick_item.get('name', ''),
+                'estimate_nav': Decimal(str(pick_item.get('valuation') or pick_item.get('nav') or 0)),
+                'estimate_growth': Decimal(str(pick_item.get('valuationY') or pick_item.get('navY') or 0)) * 100,
+                'estimate_time': datetime.now(),
+            }
 
-        valuation = item.get('valuation', 0)
-        valuation_y = item.get('valuationY', 0)
-        nav = item.get('nav', 0)
-        nav_y = item.get('navY', 0)
+        series = self._get_net_worth_es(fund_code)
+        if not series:
+            detail = self._get_fund_detail(fund_code)
+            if not detail:
+                return None
+            return {
+                'fund_code': fund_code,
+                'fund_name': detail.get('name', ''),
+                'estimate_nav': Decimal(str(detail.get('nav') or 0)),
+                'estimate_growth': Decimal(str(detail.get('dailyYield') or 0)) * 100,
+                'estimate_time': datetime.now(),
+            }
+        item = series[-1]
 
-        # 非交易时段 valuation=0，fallback 到昨日净值
-        if valuation and valuation != 0:
-            estimate_nav = Decimal(str(valuation))
-            estimate_growth = Decimal(str(valuation_y)) * 100
-        else:
-            estimate_nav = Decimal(str(nav))
-            estimate_growth = Decimal(str(nav_y)) * 100
+        estimate_nav = Decimal(str(item.get('quote') or 0))
+        estimate_growth = Decimal(str(item.get('change') or 0)) * 100
+
+        # 优先使用服务端返回的估值时间，解析失败再用本地时间兜底
+        estimate_time = datetime.now()
+        try:
+            estimate_time = datetime.strptime(
+                f"{item.get('date', '')} {item.get('update', '')}",
+                '%Y-%m-%d %H:%M:%S',
+            )
+        except (TypeError, ValueError):
+            pass
 
         detail = self._get_fund_detail(fund_code)
         fund_name = detail.get('name', '') if detail else ''
@@ -183,30 +222,35 @@ class XiaoBeiYangJiSource:
             'fund_code': fund_code,
             'fund_name': fund_name,
             'estimate_nav': estimate_nav,
-            'estimate_time': datetime.now(),
+            'estimate_time': estimate_time,
             'estimate_growth': estimate_growth,
         }
 
     def fetch_holdings(self) -> List[Dict]:
         """获取持仓列表"""
-        data = self._request('POST', '/yangji-api/api/get-hold-list', json=self._common_body())
+        data = self._request_v2(
+            'POST',
+            '/api/app/user/get-hold-list',
+            json=self._common_body(),
+        )
         items = data.get('list', []) if data else []
         valid_items = [x for x in items if x.get('money')]
         if not valid_items:
             return []
-
-        codes = [x['code'] for x in valid_items]
-        nav_list = self._get_optional_change_nav(codes)
-        nav_map = {x['code']: Decimal(str(x['nav'])) for x in (nav_list or []) if x.get('nav')}
 
         result = []
         for item in valid_items:
             fund_code = item['code']
             money = Decimal(str(item['money']))
             earnings = Decimal(str(item.get('earnings', 0)))
-            fund_name = item.get('data', {}).get('name', '')
-            nav = nav_map.get(fund_code, Decimal('0'))
-            share = (money / nav).quantize(Decimal('0.01')) if nav else Decimal('0')
+            nav = Decimal(str(item.get('nav', 0)))
+            hold_lot = item.get('holdLot') or (money / nav if nav else 0)
+            fund_name = (
+                item.get('name')
+                or (item.get('data') or {}).get('name')
+                or ''
+            )
+            share = Decimal(str(hold_lot)).quantize(Decimal('0.01')) if hold_lot else Decimal('0')
             result.append({
                 'fund_code': fund_code,
                 'fund_name': fund_name,
